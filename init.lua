@@ -104,4 +104,150 @@ require("lazy").setup({
       require("nvim-autopairs").setup({})
     end,
   },
+
+  -- ===================== Autocomplete / LSP stack =====================
+  -- Everything below is new. It adds real code intelligence (go-to-def,
+  -- diagnostics, hover docs) and completion popups for popular languages:
+  -- Lua, Python, JavaScript/TypeScript, C/C++, Bash, HTML/CSS, and JSON.
+
+  -- Mason: installs and manages language servers for you (no manual setup).
+  {
+    "williamboman/mason.nvim",
+    config = function()
+      require("mason").setup()
+    end,
+  },
+
+  -- Mason-lspconfig: bridges Mason with nvim-lspconfig so servers below
+  -- get auto-installed the first time Neovim starts.
+  {
+    "williamboman/mason-lspconfig.nvim",
+    dependencies = { "williamboman/mason.nvim" },
+    config = function()
+      require("mason-lspconfig").setup({
+        ensure_installed = {
+          "lua_ls",     -- Lua
+          "pyright",    -- Python
+          "ts_ls",      -- JavaScript / TypeScript
+          "clangd",     -- C / C++
+          "bashls",     -- Bash
+          "html",       -- HTML
+          "cssls",      -- CSS
+          "jsonls",     -- JSON
+        },
+      })
+    end,
+  },
+
+  -- nvim-lspconfig: ships the default server configs (cmd, filetypes, root
+  -- markers) that vim.lsp.config() below builds on top of. We no longer
+  -- call require('lspconfig')[server].setup() directly — that path is
+  -- deprecated as of nvim-lspconfig + Neovim 0.11 and will be removed in
+  -- nvim-lspconfig v3.0.0. The new built-in API is vim.lsp.config / vim.lsp.enable.
+  {
+    "neovim/nvim-lspconfig",
+    dependencies = { "williamboman/mason-lspconfig.nvim", "hrsh7th/cmp-nvim-lsp" },
+    config = function()
+      -- Tell language servers the editor can render completion items with
+      -- extra info (snippets, docs, etc.) — cmp-nvim-lsp adds this.
+      local capabilities = require("cmp_nvim_lsp").default_capabilities()
+
+      -- Keymaps that apply only in buffers where an LSP has attached.
+      vim.api.nvim_create_autocmd("LspAttach", {
+        callback = function(args)
+          local map = function(mode, lhs, rhs)
+            vim.keymap.set(mode, lhs, rhs, { buffer = args.buf, silent = true })
+          end
+          map("n", "gd", vim.lsp.buf.definition)       -- go to definition
+          map("n", "K", vim.lsp.buf.hover)              -- hover docs
+          map("n", "gr", vim.lsp.buf.references)        -- find references
+          map("n", "<leader>rn", vim.lsp.buf.rename)    -- rename symbol
+          map("n", "<leader>ca", vim.lsp.buf.code_action)
+          map("n", "[d", vim.diagnostic.goto_prev)
+          map("n", "]d", vim.diagnostic.goto_next)
+        end,
+      })
+
+      -- vim.lsp.config("*", ...) applies these defaults to every server
+      -- configured below, so we don't have to repeat `capabilities` each time.
+      vim.lsp.config("*", {
+        capabilities = capabilities,
+      })
+
+      -- lua_ls needs to know Neovim ships its own Lua globals (vim.*),
+      -- otherwise it flags them as "undefined global" everywhere.
+      vim.lsp.config("lua_ls", {
+        settings = {
+          Lua = {
+            diagnostics = { globals = { "vim" } },
+          },
+        },
+      })
+
+      -- Turn on every server. mason-lspconfig already installed the
+      -- binaries; this just tells Neovim's built-in LSP client to start
+      -- them for matching filetypes.
+      vim.lsp.enable({
+        "lua_ls", "pyright", "ts_ls", "clangd", "bashls", "html", "cssls", "jsonls",
+      })
+    end,
+  },
+
+  -- LuaSnip: snippet engine used by nvim-cmp to expand snippets
+  -- (e.g. typing "for" + Tab in Python expands a full for-loop).
+  { "L3MON4D3/LuaSnip", build = "make install_jsregexp" },
+
+  -- nvim-cmp: the actual autocomplete popup/engine, wired up to
+  -- LSP, the current buffer, file paths, and snippets.
+  {
+    "hrsh7th/nvim-cmp",
+    dependencies = {
+      "hrsh7th/cmp-nvim-lsp",   -- completions from the language server
+      "hrsh7th/cmp-buffer",     -- completions from words in open buffers
+      "hrsh7th/cmp-path",       -- completions from filesystem paths
+      "saadparwaiz1/cmp_luasnip", -- completions from snippets
+      "L3MON4D3/LuaSnip",
+    },
+    config = function()
+      local cmp = require("cmp")
+      local luasnip = require("luasnip")
+
+      cmp.setup({
+        snippet = {
+          expand = function(args)
+            luasnip.lsp_expand(args.body)
+          end,
+        },
+        mapping = cmp.mapping.preset.insert({
+          ["<C-Space>"] = cmp.mapping.complete(),   -- manually trigger completion
+          ["<CR>"] = cmp.mapping.confirm({ select = true }), -- accept selected item
+          ["<Tab>"] = cmp.mapping(function(fallback)
+            if cmp.visible() then
+              cmp.select_next_item()
+            elseif luasnip.expand_or_jumpable() then
+              luasnip.expand_or_jump()
+            else
+              fallback()
+            end
+          end, { "i", "s" }),
+          ["<S-Tab>"] = cmp.mapping(function(fallback)
+            if cmp.visible() then
+              cmp.select_prev_item()
+            elseif luasnip.jumpable(-1) then
+              luasnip.jump(-1)
+            else
+              fallback()
+            end
+          end, { "i", "s" }),
+        }),
+        sources = cmp.config.sources({
+          { name = "nvim_lsp" },
+          { name = "luasnip" },
+        }, {
+          { name = "buffer" },
+          { name = "path" },
+        }),
+      })
+    end,
+  },
 })
